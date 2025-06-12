@@ -1,0 +1,222 @@
+# Dossier : Architecture complète de Base de Connaissances pour IA (v 1.0 – juin 2025)
+
+![Architecture diagram](/mnt/data/A_flat_design_digital_diagram_illustrates_a_multi-.png)
+
+---
+
+## 0. Executive Summary
+
+Ce dossier décrit une architecture de KB multi‑couches couplant graphe de connaissances, recherche vectorielle et orchestration LLM, prête pour la mise en production à horizon 2025‑2027. Il inclut :
+
+* Principes de conception et schéma directeur ;
+* Détails techniques par couche ;
+* Gouvernance & conformité (EU AI Act) ;
+* Roadmap d’implémentation SoloBoost ;
+* Prévisions technologiques et indicateurs KPIs.
+
+---
+
+## 1. Principes de Conception
+
+1. **Single Source of Truth** : toute entité possède un ID persistant partagé entre le Knowledge Graph (KG) et la Vector Store.
+2. **Hybrid Query First** : les API doivent exposer un endpoint combinant mot‑clé, vecteur et contraintes graphe (Cypher + rerank).
+3. **Observability‑by‑Design** : chaque micro‑service publie traces OpenTelemetry et métriques Prometheus.
+4. **Privacy & Compliance** : labels de sensibilité + politiques de rétention automatisées (delete‑cascade).
+5. **Continuous Learning Loop** : feedback utilisateur → ré‑indexation embeddings → fine‑tuning.
+
+---
+
+## 2. Architecture par Couche
+
+| # | Couche                        | Composants                                                    | Rôle clé                                     | SLA cible            |
+| - | ----------------------------- | ------------------------------------------------------------- | -------------------------------------------- | -------------------- |
+| 1 | **Ingestion**                 | Airbyte, Meltano, LangChain Loaders                           | Extraction, nettoyage, enrichissement E/R.   | Δ‑donnée < 10 min    |
+| 2 | **Storage**                   | Raw Lake (Parquet), KG (Néo4j 5 cluster), Vector (Qdrant 2.3) | Stockage, versioning, indexation sémantique. | 99.95 % uptime       |
+| 3 | **Semantic**                  | Ontologies OWL2, Taxonomies YAML, TerminusDB branches         | Schéma métier, inférence, versioning.        | 100 % valid SHACL    |
+| 4 | **Access**                    | GraphQL API, Cypher4J, Hybrid Search svc                      | Point d’entrée applicatif.                   | P95 latence < 150 ms |
+| 5 | **Reasoning / Orchestration** | LangGraph 0.4, LangChain 0.2, Function Calling                | Agents RAG 2.0, règles OWL.                  | Réponse < 1,5 s      |
+| 6 | **Governance & Ops**          | dbt‑metadata, OpenMetadata, OTel collector, Evidently AI      | Qualité, sécurité, observabilité et MLOps.   | MTTR < 30 min        |
+
+### 2.1 Ingestion détaillée
+
+```mermaid
+flowchart TD
+  source1[(CRM)] --> X[Airbyte]
+  source2[(Google Reviews)] --> X
+  X --> C{Clean + Dedup}
+  C --> E[Entity Extraction]
+  E --> S[Sink: Data Lake]
+  E --> KG[Neo4j]
+  E --> VS[Qdrant]
+```
+
+* Extraction d’entités par pipeline spaCy → LangGraph chunk‑router.
+* Canonicalisation via table de correspondances (noms ↔ SIRET).
+
+### 2.2 Knowledge Graph – Schéma cœur (simplifié)
+
+```text
+(:Business)-[:OFFERS]->(:Service)
+(:Business)-[:LOCATED_IN]->(:GeoArea)
+(:GeoArea)-[:PART_OF]->(:Region)
+(:Service)-[:TAGGED]->(:Keyword)
+(:Review)-[:ABOUT]->(:Business)
+(:UserAction)-[:TRIGGERED_BY]->(:AgentSession)
+```
+
+### 2.3 Vector Store
+
+* **Index** : HNSW, 768‑D embeddings (OpenAI text‑embedding‑3‑large).
+* **Metadata** : `business_id`, `lang`, `ts_created`.
+* **Hybrid ranking** : α = 0.75 vecteur / 0.25 BM25 (tunable).
+
+### 2.4 Orchestration & Agents
+
+* **Agent « Audit SEO Local »** :
+
+  * `task`: analyser KG + SERP + avis.
+  * `tool`: HybridSearch, WebPilot API, Pandas.
+  * `output`: rapport PDF hebdomadaire.
+* **Guardrails** : Andrew guard v0.3 (regex + policy graph) pour filtrage contenu offensant.
+
+---
+
+## 3. Gouvernance & Conformité
+
+### 3.1 EU AI Act (entrée en vigueur : août 2025)
+
+| Obligation                            | Niveau de risque | Implémentation KB                          |
+| ------------------------------------- | ---------------- | ------------------------------------------ |
+| Gestion de la **provenance**          | Tous systèmes    | Graph edge `:HAS_PROVENANCE` + lineage dbt |
+| **Évaluation de conformité** annuelle | Haut risque      | Evidently AI reports + human audit         |
+| **Registre public** des modèles       | GPAI             | Publication modèle + fiche technique       |
+
+### 3.2 RGPD
+
+* Logs pseudonymisés (ID ↔ hash salté).
+* Droit à l’oubli : suppression d’entité cascade (KG & vecteur) en < 30 j.
+
+---
+
+## 4. KPIs & Observabilité
+
+| Domaine           | KPI                     | Seuil 2025  |
+| ----------------- | ----------------------- | ----------- |
+| Pertinence RAG    | Precision\@5            | ≥ 0.85      |
+| Fraîcheur données | Data lag (Δ)            | ≤ 15 min    |
+| Performance       | Taux timeout API        | < 1 %       |
+| Sécurité          | Vuln high CVEs patchées | 100 % < 7 j |
+| Utilisateur       | CSAT chatbot            | ≥ 4.5 / 5   |
+
+---
+
+## 5. Roadmap SoloBoost (18 mois)
+
+| T + mois | Livrables                  | Stack                     | Objectif                     |
+| -------- | -------------------------- | ------------------------- | ---------------------------- |
+| 0–2      | POC ingestion + Qdrant     | Airbyte + Qdrant docker   | Recherche sémantique basique |
+| 3–5      | KG minimal + hybrid API    | Neo4j 5 cluster, Cypher4J | Cas d’usage FAQ Locales      |
+| 6–9      | Agents RAG 2.0 + dashboard | LangGraph, Superset       | Audit SEO automatisé         |
+| 10–12    | Observability full         | OTel, Grafana Cloud       | SLA & alerting               |
+| 13–18    | Conformité EU AI Act       | OpenMetadata, Evidently   | Certification interne        |
+
+---
+
+## 6. Prévisions & Tendances 2025‑2027
+
+1. **Convergence Vector + Graph** : Neo4j « Vector Native » GA 2026, Weaviate Graph layer → requêtes unifiées. \[Neo4j 2025 roadmap]\[N‑2025].
+2. **Embeddings multimodaux** : audio+image+texte (OpenAI Emb-3‑multi) réduiront coût indexation de 30 %.
+3. **Hosted LLM gateways** (OpenAI Assistants, Anthropic Services) remplaceront agents custom pour scénarios simples.
+4. **Observabilité GenAI** : OpenTelemetry Semantic Conventions for LLM (OTEL v2). \[Otel‑2025].
+5. \*\*Régulation \*\* : AI Act → obligation d’explainability pour systèmes « haut risque » ; curation de dataset deviendra un avantage concurrentiel.
+
+---
+
+## 7. Annexes
+
+* **A. Compatibilité LangChain 0.2** : breaking changes & migration.
+* **B. Exemples de requêtes Cypher & Hybrid**.
+* **C. Table de mapping SIRET ↔ BusinessID.**
+
+---
+
+> **Mainteneur :** Lucas Gulino (SoloBoost)
+> **Version** : 1.0 – 12 juin 2025
+
+---
+
+### Références rapides
+
+* [LangChain 0.2 overview](https://python.langchain.com/docs/versions/v0_2/overview/)
+* [Vector DBs 2025 – lakeFS](https://lakefs.io/blog/12-vector-databases-2023/)
+* [EU AI Act checker](https://artificialintelligenceact.eu/)
+* [Neo4j 2025.01 guide](https://neo4j.com/docs/upgrade-migration-guide/current/version-2025/upgrade/)
+* [Agent orchestration 2025](https://medium.com/@akankshasinha247/agent-orchestration-when-to-use-langchain-langgraph-autogen-or-build-an-agentic-rag-system-cc298f785ea4)
+* [OpenTelemetry trends 2025](https://www.dynatrace.com/news/blog/opentelemetry-trends-2025/)
+* [Awesome LLMOps 2025](https://github.com/tensorchord/awesome-llmops)
+
+## 8. Publication & SEO Guide
+
+### 8.1 Choix des canaux
+
+* **Docusaurus** + GitHub Pages (source unique, markdown/MDX versionné).
+* **Soloboost.fr/kb** (hub principal, canonical vers GitHub).
+* Syndication LinkedIn & Medium avec balise `rel="canonical"` pointant sur la source.
+
+### 8.2 Structured Data & Rich Snippets (2025)
+
+```jsonld
+{
+  "@context":"https://schema.org",
+  "@type":"TechArticle",
+  "name":"Architecture KB Hybrid Graph + Vector (v1.0)",
+  "headline":"Concevoir une base de connaissance IA prête pour 2025",
+  "about":["Knowledge Graph","Vector Database","EU AI Act"],
+  "keywords":"knowledge graph, vector database, rag, seo 2025",
+  "author":{"@type":"Person","name":"Lucas Gulino"},
+  "datePublished":"2025-06-12",
+  "citation": [
+    "https://qdrant.tech/documentation/examples/graphrag-qdrant-neo4j/",
+    "https://digital-strategy.ec.europa.eu/en/policies/regulatory-framework-ai"
+  ]
+}
+```
+
+* Types à utiliser : `TechArticle`, `FAQPage`, `Dataset`, `SoftwareApplication`.
+* Ajouter `BreadcrumbList` et `SpeakableSpecification` pour Google Voice.
+* **Page anatomy** : Title ≤ 60 caractères, H1 unique, `meta description` = TL;DR (Helpful Content update 2025) ; H2 "Key Takeaways" dès le début.
+
+### 8.3 KPIs SEO
+
+| KPI                  | Cible        |
+| -------------------- | ------------ |
+| Rich result coverage | ≥ 50 % pages |
+| CTR organique        | ≥ 5 %        |
+| Taux révisions/maj   | 1×/90 j      |
+
+---
+
+## 9. Citation & Référencement
+
+* **Style principal** : APA 8ᵉ éd. (2024).
+* Citer les sorties IA comme output algorithmique :
+
+  > OpenAI. (2025). ChatGPT response to prompt « … », 12 juin 2025, [https://chat.openai.com](https://chat.openai.com)
+* Ajouter meta‐tags `citation_title`, `citation_author`, `citation_publication_date` (compatibilité Zotero).
+* Transparence EU AI Act : page publique « System Card » avec provenance dataset + modèle. Inclure `modelCard` YAML.
+
+---
+
+## 10. Contributor Workflow
+
+| Étape          | Outils                                | Validation                 |
+| -------------- | ------------------------------------- | -------------------------- |
+| Feature branch | Git & PR template                     | Reviewer dédié             |
+| Lint/CI        | markdown‑lint, shacl‑play, linkinator | CI GitHub Actions          |
+| Build & deploy | Docusaurus → Netlify                  | Preview URL + status check |
+| Ownership      | CODEOWNERS                            | Merge ⟵ 2 approbations     |
+| CLA            | cla‑assistant                         | Check automatique          |
+
+> **Note** : ajouter un dossier `/ontology/tests` avec validations SHACL exécutées par `pytest`.
+
+---
